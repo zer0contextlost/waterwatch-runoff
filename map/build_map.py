@@ -45,9 +45,23 @@ d[cols].to_csv(docs / "latest.csv", index=False)
 counts = {str(n): d[f"cls{n}"].value_counts().reindex(range(9), fill_value=0).tolist()
           for n in (7, 14, 28)}
 ranked7 = int((d.cls7 > 0).sum())
-status = {"name": "waterwatch-runoff gage map", "ok": True, "date": date,
-          "gages": int(len(d)), "ranked_7day": ranked7,
-          "below_normal_7day_pct": round(100 * d.cls7.isin([1, 2, 3, 4]).sum() / max(ranked7, 1), 1)}
+below = round(100 * d.cls7.isin([1, 2, 3, 4]).sum() / max(ranked7, 1), 1)
+age_days = (pd.Timestamp.now().normalize() - pd.to_datetime(date)).days
+state = "ok" if ranked7 >= 2000 and age_days <= 3 else "warn"
+issues = []
+if ranked7 < 2000:
+    issues.append({"level": "warn", "text": f"Only {ranked7} gages ranked; the USGS fetch may have come back short."})
+if age_days > 3:
+    issues.append({"level": "warn", "text": f"Map data is {age_days} days old."})
+status = {"contract": 1, "service": "waterwatch-map", "state": state,
+          "summary": f"Streamflow map for {date}: {below}% of {ranked7:,} ranked gages below normal (7-day).",
+          "last_activity": int(pd.Timestamp.now(tz="UTC").timestamp()), "stale_after": 36 * 3600,
+          "metrics": [{"key": "ranked_7day", "label": "Gages ranked (7-day)", "value": ranked7, "warn_below": 2000},
+                      {"key": "below_normal_pct", "label": "% below normal (7-day)", "value": below},
+                      {"key": "record_low", "label": "Record lows (7-day)", "value": int((d.cls7 == 1).sum())},
+                      {"key": "record_high", "label": "Record highs (7-day)", "value": int((d.cls7 == 8).sum())}],
+          "issues": issues,
+          "links": [{"label": "Map", "url": "https://zer0contextlost.github.io/waterwatch-runoff/"}]}
 (docs / "status.json").write_text(json.dumps(status))
 html = (HERE / "template.html").read_text().replace("__COUNTS__", json.dumps(counts))
 (docs / "index.html").write_text(html)
