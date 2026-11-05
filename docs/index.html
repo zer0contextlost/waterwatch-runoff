@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Streamflow conditions: n-day average flow vs. history at US streamgages</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { --paper:#f7f5ef; --ink:#1d2a36; --muted:#5b6670; --rule:#d8d3c6; --panel:#fffdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+         font:15px/1.5 "Iowan Old Style","Palatino Linotype",Georgia,serif; }
+  header { padding:18px 22px 10px; border-bottom:1px solid var(--rule); }
+  h1 { margin:0; font-size:22px; font-weight:600; letter-spacing:.2px; }
+  .sub { color:var(--muted); font-size:14px; margin-top:2px; }
+  .bar { display:flex; gap:18px; align-items:center; flex-wrap:wrap; padding:10px 22px;
+         border-bottom:1px solid var(--rule); font-family:system-ui,sans-serif; font-size:13px; }
+  .seg button { font:inherit; border:1px solid var(--rule); background:var(--panel); color:var(--ink);
+                padding:4px 12px; cursor:pointer; }
+  .seg button:first-child { border-radius:4px 0 0 4px; } .seg button:last-child { border-radius:0 4px 4px 0; }
+  .seg button[aria-pressed=true] { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  label { cursor:pointer; color:var(--muted); }
+  #map { height:62vh; min-height:420px; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; padding:10px 22px; font-family:system-ui,sans-serif;
+            font-size:12.5px; border-bottom:1px solid var(--rule); background:var(--panel); }
+  .legend span.sw { display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:5px;
+                    vertical-align:-1px; }
+  .legend .n { color:var(--muted); }
+  .stack { display:flex; height:10px; margin:0 22px 0; gap:2px; }
+  .stack div { height:100%; } .stack div:first-child { border-radius:4px 0 0 4px; }
+  .stack div:last-child { border-radius:0 4px 4px 0; }
+  main { padding:6px 22px 30px; max-width:980px; }
+  h2 { font-size:17px; margin:22px 0 6px; font-weight:600; }
+  table { border-collapse:collapse; font-family:system-ui,sans-serif; font-size:13px; }
+  th, td { padding:3px 10px 3px 0; text-align:right; border-bottom:1px solid var(--rule); }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:500; }
+  a { color:#1f5f99; }
+  p, li { max-width:72ch; }
+  .leaflet-tooltip { font-family:system-ui,sans-serif; font-size:12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Streamflow conditions at US streamgages</h1>
+  <div class="sub"><span id="win">7</span>-day average flow ending <b id="date"></b>, compared with the same
+    dates in every past year of each gage's record. Gages with 30+ years are ranked.</div>
+</header>
+<div class="bar">
+  <div class="seg" role="group" aria-label="Averaging window">
+    <button data-n="7" aria-pressed="true">7-day</button><button data-n="14" aria-pressed="false">14-day</button><button data-n="28" aria-pressed="false">28-day</button>
+  </div>
+  <label><input type="checkbox" id="unranked"> show unranked gages</label>
+  <span style="color:var(--muted)" id="ranked"></span>
+</div>
+<div id="map"></div>
+<div class="legend" id="legend"></div>
+<div class="stack" id="stack" aria-hidden="true"></div>
+<main>
+  <h2>Share of ranked gages below normal, by state</h2>
+  <p style="color:var(--muted);font-size:14px">Below normal = under the 25th percentile for the date. States with fewer than 10 ranked gages are left out. Full table: <a href="latest.csv">latest.csv</a>.</p>
+  <table id="states"><thead><tr><th>state</th><th>ranked gages</th><th>below normal</th><th>below 10th pct.</th><th>above normal</th></tr></thead><tbody></tbody></table>
+
+  <h2>About</h2>
+  <p>USGS WaterWatch published these maps until it was retired on 2026-02-26. This page recomputes them every
+  night from USGS daily discharge with the same rules: the n-day mean flow ending on the date is ranked against
+  the n-day means ending on the same day of the year in all other years of record, and only gages with at
+  least 30 such years are ranked. Checked against WaterWatch's own archived 7-day maps (823 gages on six dates,
+  April 2025 to February 2026): same class for 91%, within one class for 99%; outside the two winter dates, 94% and 99.9%.</p>
+  <ul>
+    <li>Recent values are provisional and change as USGS reviews them. Ice-affected winter days are often
+      missing until USGS estimates them, so many northern gages go unranked in winter, as they did on WaterWatch.</li>
+    <li>Regulated rivers are shown as measured.</li>
+    <li>Gages: those in the basin table that ships with USGS's hyswap package (conterminous US).</li>
+  </ul>
+  <p>Data and code: <a href="https://github.com/zer0contextlost/waterwatch-runoff">github.com/zer0contextlost/waterwatch-runoff</a>
+  · watershed runoff 1900-2026: <a href="https://huggingface.co/datasets/zer0contextlost/waterwatch-runoff">Hugging Face</a>.
+  Not affiliated with or endorsed by the U.S. Geological Survey.</p>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const COUNTS = {"7": [1063, 119, 0, 636, 938, 2004, 303, 243, 151], "14": [1158, 125, 0, 635, 938, 1967, 291, 229, 114], "28": [1303, 105, 0, 471, 711, 2053, 473, 256, 85]};
+// diverging: dry (brown) <- neutral gray -> wet (blue); darkest at the record ends
+const CLS = {
+  1:{label:"Record low for the date", c:"#7a2d0a"},
+  3:{label:"Much below normal (<10th)", c:"#c0561f"},
+  4:{label:"Below normal (10th-24th)", c:"#e8a75f"},
+  5:{label:"Normal (25th-75th)", c:"#b9b9b4"},
+  6:{label:"Above normal (76th-90th)", c:"#86bde0"},
+  7:{label:"Much above normal (>90th)", c:"#2f7bbf"},
+  8:{label:"Record high for the date", c:"#0b3c73"},
+  0:{label:"Not ranked", c:"#ffffff"}
+};
+const ORDER = [1,3,4,5,6,7,8];
+let N = 7, rows = [], layer;
+const map = L.map("map", {preferCanvas:true, minZoom:3}).fitBounds([[24.5, -125], [49.5, -66.5]]);
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+  {attribution:"Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ", maxZoom:12}).addTo(map);
+const idx = {cls:{7:5,14:6,28:7}, pct:{7:8,14:9,28:10}, q:{7:11,14:12,28:13}};
+function cnt(n){ const c = COUNTS[n]; c[3] += c[2]; c[2] = 0; return c; }
+function draw(){
+  if (layer) layer.remove();
+  layer = L.layerGroup();
+  const showU = document.getElementById("unranked").checked;
+  const ordered = rows.slice().sort((a,b)=> (Math.abs(a[idx.cls[N]]-5) - Math.abs(b[idx.cls[N]]-5)));
+  for (const r of ordered){
+    let k = r[idx.cls[N]]; if (k === 2) k = 3;
+    if (k === 0 && !showU) continue;
+    const rec = (k === 1 || k === 8);
+    const m = L.circleMarker([r[3], r[4]], {radius: rec ? 4.5 : 3.5, weight: rec ? 2 : 1,
+      color: k === 0 ? "#9aa0a6" : (rec ? "#1d2a36" : "#fffdf8"), fillColor: CLS[k].c,
+      fillOpacity: k === 0 ? 0.6 : 0.95});
+    const p = r[idx.pct[N]], q = r[idx.q[N]];
+    m.bindTooltip(`<b>${r[1]}</b><br>USGS ${r[0]} · ${r[2] || ""}<br>${CLS[k].label}` +
+      (p != null ? `<br>${N}-day percentile: ${p.toFixed(0)}` : "") +
+      (q != null ? `<br>${N}-day mean flow: ${q.toLocaleString(undefined,{maximumFractionDigits:1})} cfs` : ""));
+    layer.addLayer(m);
+  }
+  layer.addTo(map);
+  const c = cnt(N), ranked = ORDER.reduce((s,k)=>s+c[k],0);
+  document.getElementById("ranked").textContent = `${ranked.toLocaleString()} ranked of ${rows.length.toLocaleString()} gages`;
+  document.getElementById("win").textContent = N;
+  document.getElementById("legend").innerHTML = ORDER.map(k =>
+    `<span><span class="sw" style="background:${CLS[k].c};${(k==1||k==8)?'outline:2px solid #1d2a36;outline-offset:-1px':''}"></span>${CLS[k].label} <span class="n">${c[k].toLocaleString()}</span></span>`).join("") +
+    `<span><span class="sw" style="background:#fff;border:1px solid #9aa0a6"></span>Not ranked <span class="n">${c[0].toLocaleString()}</span></span>`;
+  document.getElementById("stack").innerHTML = ORDER.filter(k=>c[k]).map(k =>
+    `<div title="${CLS[k].label}: ${c[k]}" style="flex:${c[k]};background:${CLS[k].c}"></div>`).join("");
+  states();
+}
+function states(){
+  const s = {};
+  for (const r of rows){ let k = r[idx.cls[N]]; if (!k) continue; if (k===2) k=3;
+    const t = s[r[2]||"?"] ||= {n:0,b:0,b10:0,a:0}; t.n++;
+    if (k<=4) t.b++; if (k<=3) t.b10++; if (k>=6) t.a++; }
+  const out = Object.entries(s).filter(([,t])=>t.n>=10).sort((x,y)=>y[1].b/y[1].n - x[1].b/x[1].n);
+  const pc = (a,b)=> (100*a/b).toFixed(0)+"%";
+  document.querySelector("#states tbody").innerHTML = out.map(([st,t]) =>
+    `<tr><td>${st}</td><td>${t.n}</td><td>${pc(t.b,t.n)}</td><td>${pc(t.b10,t.n)}</td><td>${pc(t.a,t.n)}</td></tr>`).join("");
+}
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
+  N = +b.dataset.n; document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", x===b)); draw(); });
+document.getElementById("unranked").onchange = draw;
+fetch("latest.json").then(r=>r.json()).then(d => { rows = d.rows; document.getElementById("date").textContent = d.date; draw(); });
+</script>
+</body>
+</html>

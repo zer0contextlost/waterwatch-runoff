@@ -9,6 +9,8 @@ Data: [huggingface.co/datasets/zer0contextlost/waterwatch-runoff](https://huggin
 
 Not affiliated with or endorsed by the U.S. Geological Survey.
 
+**Live gage map:** [zer0contextlost.github.io/waterwatch-runoff](https://zer0contextlost.github.io/waterwatch-runoff/), the 7/14/28-day streamflow percentile maps WaterWatch used to publish, rebuilt nightly. Same class as WaterWatch's archived 7-day maps for 91% of 823 gages (99% within one class).
+
 ## Why this exists
 
 USGS retired WaterWatch on 2026-02-26. Its HUC runoff maps and tables (monthly, quarterly and
